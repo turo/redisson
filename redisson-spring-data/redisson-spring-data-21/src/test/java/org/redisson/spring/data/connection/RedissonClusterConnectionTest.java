@@ -1,5 +1,25 @@
 package org.redisson.spring.data.connection;
 
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.redisson.ClusterRunner;
+import org.redisson.ClusterRunner.ClusterProcesses;
+import org.redisson.RedisRunner;
+import org.redisson.RedisRunner.FailedToStartRedisException;
+import org.redisson.Redisson;
+import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
+import org.redisson.config.SubscriptionMode;
+import org.redisson.connection.MasterSlaveConnectionManager;
+import org.redisson.connection.balancer.RandomLoadBalancer;
+import org.springframework.dao.InvalidDataAccessResourceUsageException;
+import org.springframework.data.redis.connection.ClusterInfo;
+import org.springframework.data.redis.connection.RedisClusterNode;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisNode.NodeType;
+import org.springframework.data.redis.core.types.RedisClientInfo;
+
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -7,25 +27,7 @@ import java.util.Map;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.*;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.redisson.ClusterRunner;
-import org.redisson.RedisRunner;
-import org.redisson.RedisRunner.FailedToStartRedisException;
-import org.redisson.Redisson;
-import org.redisson.ClusterRunner.ClusterProcesses;
-import org.redisson.api.RedissonClient;
-import org.redisson.config.Config;
-import org.redisson.config.SubscriptionMode;
-import org.redisson.connection.MasterSlaveConnectionManager;
-import org.redisson.connection.balancer.RandomLoadBalancer;
-import org.springframework.data.redis.connection.ClusterInfo;
-import org.springframework.data.redis.connection.RedisClusterNode;
-import org.springframework.data.redis.connection.RedisNode.NodeType;
-import org.springframework.data.redis.core.types.RedisClientInfo;
+import static org.redisson.connection.MasterSlaveConnectionManager.MAX_SLOT;
 
 public class RedissonClusterConnectionTest {
 
@@ -218,5 +220,75 @@ public class RedissonClusterConnectionTest {
         RedisClusterNode master = map.keySet().iterator().next();
         return master;
     }
-    
+
+    @Test
+    public void testRename_newSlot() {
+        byte[] originalKey = "key".getBytes();
+        connection.set(originalKey, "value".getBytes());
+        connection.expire(originalKey, 1000);
+
+        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
+        byte[] newKey = getNewKeyForSlot("key", MAX_SLOT - originalSlot - 1);
+
+        connection.rename(originalKey, newKey);
+
+        assertThat(connection.get(newKey)).isEqualTo("value".getBytes());
+        assertThat(connection.ttl(newKey)).isGreaterThan(0);
+
+        connection.del(newKey);
+    }
+
+    @Test
+    public void testRename_sameSlot() {
+        byte[] originalKey = "key".getBytes();
+        connection.set(originalKey, "value".getBytes());
+
+        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
+
+        byte[] newKey = getNewKeyForSlot("key", originalSlot);
+
+        assertThatCode(() -> connection.rename(originalKey, newKey)).doesNotThrowAnyException();
+
+        connection.del(newKey);
+    }
+
+    @Test
+    public void testRename_newSlotPipeline() {
+        byte[] originalKey = "key".getBytes();
+        connection.set(originalKey, "value".getBytes());
+
+        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
+
+        byte[] newKey = getNewKeyForSlot("key", MAX_SLOT - originalSlot - 1);
+
+        connection.openPipeline();
+        assertThatThrownBy(() -> connection.rename(originalKey, newKey)).isInstanceOf(InvalidDataAccessResourceUsageException.class);
+        connection.closePipeline();
+
+        connection.del(originalKey);
+    }
+
+    protected byte[] getNewKeyForSlot(String originalKey, Integer targetSlot) {
+        int counter = 0;
+
+        byte[] newKey = (originalKey + counter).getBytes();
+
+        Integer newKeySlot = connection.clusterGetSlotForKey(newKey);
+
+        while(!newKeySlot.equals(targetSlot)) {
+            counter++;
+            newKey = (originalKey + counter).getBytes();
+            targetSlot = connection.clusterGetSlotForKey(newKey);
+        }
+
+        return newKey;
+    }
+
+    @Test
+    public void testConnectionFactoryReturnsClusterConnection() {
+        RedisConnectionFactory connectionFactory = new RedissonConnectionFactory(redisson);
+
+        assertThat(connectionFactory.getConnection()).isInstanceOf(RedissonClusterConnection.class);
+    }
+
 }
