@@ -385,7 +385,7 @@ public class RedissonClusterConnection extends RedissonConnection implements Red
             throw new InvalidDataAccessResourceUsageException("Clustered rename is not supported in a pipeline");
         }
 
-        if (clusterGetSlotForKey(oldName).equals(clusterGetSlotForKey(newName))) {
+        if (redisson.getConnectionManager().calcSlot(oldName) == redisson.getConnectionManager().calcSlot(newName)) {
             super.rename(oldName, newName);
             return;
         }
@@ -406,6 +406,38 @@ public class RedissonClusterConnection extends RedissonConnection implements Red
             restore(newName, ttlInMilliseconds, value);
             del(oldName);
         }
+    }
+
+    @Override
+    public Boolean renameNX(byte[] oldName, byte[] newName) {
+        if (isPipelined()) {
+            throw new InvalidDataAccessResourceUsageException("Clustered rename is not supported in a pipeline");
+        }
+
+        if (redisson.getConnectionManager().calcSlot(oldName) == redisson.getConnectionManager().calcSlot(newName)) {
+            return super.renameNX(oldName, newName);
+        }
+
+        final byte[] value = dump(oldName);
+
+        if (null != value && !exists(newName)) {
+
+            final Long sourceTtlInSeconds = ttl(oldName);
+
+            final long ttlInMilliseconds;
+            if (null != sourceTtlInSeconds && sourceTtlInSeconds > 0) {
+                ttlInMilliseconds = sourceTtlInSeconds * 1000;
+            } else {
+                ttlInMilliseconds = 0;
+            }
+
+            restore(newName, ttlInMilliseconds, value);
+            del(oldName);
+
+            return true;
+        }
+
+        return false;
     }
 
 }
