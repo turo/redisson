@@ -278,7 +278,7 @@ public class RedissonClusterConnectionTest {
         while(!newKeySlot.equals(targetSlot)) {
             counter++;
             newKey = (originalKey + counter).getBytes();
-            targetSlot = connection.clusterGetSlotForKey(newKey);
+            newKeySlot = connection.clusterGetSlotForKey(newKey);
         }
 
         return newKey;
