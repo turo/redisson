@@ -19,6 +19,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.reactivestreams.Publisher;
 import org.redisson.api.RFuture;
 import org.redisson.client.codec.ByteArrayCodec;
 import org.redisson.client.codec.StringCodec;
@@ -26,9 +27,11 @@ import org.redisson.client.protocol.RedisCommands;
 import org.redisson.connection.MasterSlaveEntry;
 import org.redisson.reactive.CommandReactiveExecutor;
 import org.springframework.data.redis.connection.ReactiveClusterKeyCommands;
+import org.springframework.data.redis.connection.ReactiveRedisConnection;
 import org.springframework.data.redis.connection.RedisClusterNode;
 
 import io.netty.util.CharsetUtil;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -59,4 +62,23 @@ public class RedissonReactiveClusterKeyCommands extends RedissonReactiveKeyComma
         return m.map(v -> ByteBuffer.wrap(v));
     }
 
+    @Override
+    public Mono<Boolean> rename(ByteBuffer key, ByteBuffer newName) {
+        return super.rename(key, newName);
+    }
+
+    @Override
+    public Mono<Boolean> renameNX(ByteBuffer key, ByteBuffer newName) {
+        return super.renameNX(key, newName);
+    }
+
+    @Override
+    public Flux<ReactiveRedisConnection.BooleanResponse<RenameCommand>> rename(Publisher<RenameCommand> commands) {
+        return super.rename(commands);
+    }
+
+    @Override
+    public Flux<ReactiveRedisConnection.BooleanResponse<RenameCommand>> renameNX(Publisher<RenameCommand> commands) {
+        return super.renameNX(commands);
+    }
 }

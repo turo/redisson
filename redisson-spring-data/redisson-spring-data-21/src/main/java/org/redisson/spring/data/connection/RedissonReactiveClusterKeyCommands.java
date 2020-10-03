@@ -15,10 +15,8 @@
  */
 package org.redisson.spring.data.connection;
 
-import java.nio.ByteBuffer;
-import java.util.List;
-import java.util.stream.Collectors;
-
+import io.netty.util.CharsetUtil;
+import org.reactivestreams.Publisher;
 import org.redisson.api.RFuture;
 import org.redisson.client.codec.ByteArrayCodec;
 import org.redisson.client.codec.StringCodec;
@@ -26,13 +24,20 @@ import org.redisson.client.protocol.RedisCommands;
 import org.redisson.connection.MasterSlaveEntry;
 import org.redisson.reactive.CommandReactiveExecutor;
 import org.springframework.data.redis.connection.ReactiveClusterKeyCommands;
+import org.springframework.data.redis.connection.ReactiveRedisConnection;
+import org.springframework.data.redis.connection.ReactiveRedisConnection.BooleanResponse;
 import org.springframework.data.redis.connection.RedisClusterNode;
-
-import io.netty.util.CharsetUtil;
+import org.springframework.util.Assert;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
 /**
- * 
+ *
  * @author Nikita Koksharov
  *
  */
@@ -57,6 +62,44 @@ public class RedissonReactiveClusterKeyCommands extends RedissonReactiveKeyComma
             return executorService.readRandomAsync(entry, ByteArrayCodec.INSTANCE, RedisCommands.RANDOM_KEY);
         });
         return m.map(v -> ByteBuffer.wrap(v));
+    }
+
+    @Override
+    public Flux<BooleanResponse<RenameCommand>> rename(Publisher<RenameCommand> commands) {
+
+        return execute(commands, command -> {
+            Assert.notNull(command.getKey(), "Key must not be null!");
+            Assert.notNull(command.getNewName(), "New name must not be null!");
+
+            byte[] keyBuf = toByteArray(command.getKey());
+            byte[] newKeyBuf = toByteArray(command.getNewName());
+
+            if (executorService.getConnectionManager().calcSlot(keyBuf) == executorService.getConnectionManager().calcSlot(newKeyBuf)) {
+                return super.rename(commands);
+            }
+
+            BooleanResponse<RenameCommand> result = new BooleanResponse<>(command, true);
+
+            return read(keyBuf, ByteArrayCodec.INSTANCE, RedisCommands.DUMP, keyBuf)
+                    .filter(Objects::nonNull)
+                    .zipWith(
+                            pTtl(command.getKey())
+                                    .filter(Objects::nonNull)
+                                    .map(ttl -> Math.max(0, ttl))
+                                    .switchIfEmpty(Mono.just(0L))
+                    )
+                    .doOnSuccess((ignored) -> del(command.getKey()))
+                    .flatMap(valueAndTtl -> {
+                        return write(newKeyBuf, StringCodec.INSTANCE, RedisCommands.RESTORE, newKeyBuf, valueAndTtl.getT2(), valueAndTtl.getT1());
+                    })
+                    .thenReturn(result)
+                    .switchIfEmpty(Mono.just(result));
+        });
+    }
+
+    @Override
+    public Flux<ReactiveRedisConnection.BooleanResponse<RenameCommand>> renameNX(Publisher<RenameCommand> commands) {
+        return super.renameNX(commands);
     }
 
 }
