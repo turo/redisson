@@ -127,7 +127,6 @@ public class RedissonClusterConnectionRenameTest {
 
     @Test
     public void testRenameNX() {
-        byte[] originalKey = "key".getBytes();
         connection.set(originalKey, "value".getBytes());
         connection.expire(originalKey, 1000);
 
@@ -149,7 +148,6 @@ public class RedissonClusterConnectionRenameTest {
 
     @Test
     public void testRenameNX_pipeline() {
-        byte[] originalKey = "key".getBytes();
         connection.set(originalKey, "value".getBytes());
 
         Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
