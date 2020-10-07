@@ -222,69 +222,6 @@ public class RedissonClusterConnectionTest {
     }
 
     @Test
-    public void testRename_newSlot() {
-        byte[] originalKey = "key".getBytes();
-        connection.set(originalKey, "value".getBytes());
-        connection.expire(originalKey, 1000);
-
-        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-        byte[] newKey = getNewKeyForSlot("key", MAX_SLOT - originalSlot - 1);
-
-        connection.rename(originalKey, newKey);
-
-        assertThat(connection.get(newKey)).isEqualTo("value".getBytes());
-        assertThat(connection.ttl(newKey)).isGreaterThan(0);
-
-        connection.del(newKey);
-    }
-
-    @Test
-    public void testRename_sameSlot() {
-        byte[] originalKey = "key".getBytes();
-        connection.set(originalKey, "value".getBytes());
-
-        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-
-        byte[] newKey = getNewKeyForSlot("key", originalSlot);
-
-        assertThatCode(() -> connection.rename(originalKey, newKey)).doesNotThrowAnyException();
-
-        connection.del(newKey);
-    }
-
-    @Test
-    public void testRename_newSlotPipeline() {
-        byte[] originalKey = "key".getBytes();
-        connection.set(originalKey, "value".getBytes());
-
-        Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-
-        byte[] newKey = getNewKeyForSlot("key", MAX_SLOT - originalSlot - 1);
-
-        connection.openPipeline();
-        assertThatThrownBy(() -> connection.rename(originalKey, newKey)).isInstanceOf(InvalidDataAccessResourceUsageException.class);
-        connection.closePipeline();
-
-        connection.del(originalKey);
-    }
-
-    protected byte[] getNewKeyForSlot(String originalKey, Integer targetSlot) {
-        int counter = 0;
-
-        byte[] newKey = (originalKey + counter).getBytes();
-
-        Integer newKeySlot = connection.clusterGetSlotForKey(newKey);
-
-        while(!newKeySlot.equals(targetSlot)) {
-            counter++;
-            newKey = (originalKey + counter).getBytes();
-            newKeySlot = connection.clusterGetSlotForKey(newKey);
-        }
-
-        return newKey;
-    }
-
-    @Test
     public void testConnectionFactoryReturnsClusterConnection() {
         RedisConnectionFactory connectionFactory = new RedissonConnectionFactory(redisson);
 
