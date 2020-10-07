@@ -13,6 +13,8 @@ import org.redisson.RedisRunner.FailedToStartRedisException;
 import org.redisson.Redisson;
 import org.redisson.RedissonKeys;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
+import org.redisson.client.protocol.RedisCommands;
 import org.redisson.config.Config;
 import org.redisson.config.SubscriptionMode;
 import org.redisson.connection.balancer.RandomLoadBalancer;
@@ -28,18 +30,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.redisson.connection.MasterSlaveConnectionManager.MAX_SLOT;
 
 @RunWith(Parameterized.class)
-public class RedissonReactiveRedisClusterConnectionRenameTest {
+public class RedissonReactiveClusterKeyCommandsTest {
 
-    @Parameterized.Parameters(name= "{index} - same slot = {0}")
+    @Parameterized.Parameters(name= "{index} - same slot = {0}; has ttl = {1}")
     public static Iterable<Object[]> data() {
         return Arrays.asList(new Object[][] {
-                {false},
-                {true}
+                {false, false},
+                {true, false},
+                {false, true},
+                {true, true}
         });
     }
 
     @Parameterized.Parameter(0)
     public boolean sameSlot;
+
+    @Parameterized.Parameter(1)
+    public boolean hasTtl;
 
     static RedissonClient redisson;
     static RedissonReactiveRedisClusterConnection connection;
@@ -47,6 +54,7 @@ public class RedissonReactiveRedisClusterConnectionRenameTest {
 
     ByteBuffer originalKey = ByteBuffer.wrap("key".getBytes());
     ByteBuffer newKey = ByteBuffer.wrap("unset".getBytes());
+    ByteBuffer value = ByteBuffer.wrap("value".getBytes());
 
     @BeforeClass
     public static void before() throws FailedToStartRedisException, IOException, InterruptedException {
@@ -82,26 +90,46 @@ public class RedissonReactiveRedisClusterConnectionRenameTest {
 
     @After
     public void cleanup() {
-        Mono<?> mono = connection.keyCommands().del(originalKey);
-        Mono<?> mono1 = connection.keyCommands().del(newKey);
-
-        mono.block();
-        mono1.block();
+        connection.keyCommands().del(originalKey)
+                .and(connection.keyCommands().del(newKey))
+                .block();
     }
 
     @Test
     public void testRename() {
-        ByteBuffer originalKey = ByteBuffer.wrap("key".getBytes());
-        connection.stringCommands().set(originalKey, ByteBuffer.wrap("value".getBytes())).block();
-        connection.keyCommands().expire(originalKey, Duration.ofSeconds(1000)).block();
+        connection.stringCommands().set(originalKey, value).block();
 
-        Integer originalSlot = connection.clusterGetSlotForKey(originalKey).block();
-        ByteBuffer newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        if (hasTtl) {
+            connection.keyCommands().expire(originalKey, Duration.ofSeconds(1000)).block();
+        }
 
-        connection.keyCommands().rename(originalKey, newKey).block();
+        Integer originalSlot = getSlotForKey(originalKey);
+        ByteBuffer newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
 
-        assertThat(connection.stringCommands().get(newKey).block()).isEqualTo("value".getBytes());
-        assertThat(connection.keyCommands().ttl(newKey).block()).isGreaterThan(0);
+        Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
+
+        assertThat(response).isTrue();
+
+        final ByteBuffer newKeyValue = connection.stringCommands().get(newKey).block();
+        assertThat(newKeyValue).isEqualTo(value);
+        if (hasTtl) {
+            assertThat(connection.keyCommands().ttl(newKey).block()).isGreaterThan(0);
+        } else {
+            assertThat(connection.keyCommands().ttl(newKey).block()).isEqualTo(-1);
+        }
+    }
+
+    @Test
+    public void testRename_keyNotExist() {
+        Integer originalSlot = getSlotForKey(originalKey);
+        ByteBuffer newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
+
+        Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
+
+        assertThat(response).isTrue();
+
+        final ByteBuffer newKeyValue = connection.stringCommands().get(newKey).block();
+        assertThat(newKeyValue).isEqualTo(null);
     }
 
     protected ByteBuffer getNewKeyForSlot(String originalKey, Integer targetSlot) {
@@ -109,12 +137,12 @@ public class RedissonReactiveRedisClusterConnectionRenameTest {
 
         ByteBuffer newKey = ByteBuffer.wrap((originalKey + counter).getBytes());
 
-        Integer newKeySlot = connection.clusterGetSlotForKey(newKey).block();
+        Integer newKeySlot = getSlotForKey(newKey);
 
         while(!newKeySlot.equals(targetSlot)) {
             counter++;
             newKey = ByteBuffer.wrap((originalKey + counter).getBytes());
-            newKeySlot = connection.clusterGetSlotForKey(newKey).block();
+            newKeySlot = getSlotForKey(newKey);
         }
 
         return newKey;
@@ -122,19 +150,25 @@ public class RedissonReactiveRedisClusterConnectionRenameTest {
 
     @Test
     public void testRenameNX() {
-        connection.stringCommands().set(originalKey, ByteBuffer.wrap("value".getBytes())).block();
-        connection.keyCommands().expire(originalKey, Duration.ofSeconds(1000)).block();
+        connection.stringCommands().set(originalKey, value).block();
+        if (hasTtl) {
+            connection.keyCommands().expire(originalKey, Duration.ofSeconds(1000)).block();
+        }
 
-        Integer originalSlot = connection.clusterGetSlotForKey(originalKey).block();
-        newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        Integer originalSlot = getSlotForKey(originalKey);
+        newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
 
         Boolean result = connection.keyCommands().renameNX(originalKey, newKey).block();
 
-        assertThat(connection.stringCommands().get(newKey).block()).isEqualTo("value".getBytes());
-        assertThat(connection.keyCommands().ttl(newKey).block()).isGreaterThan(0);
         assertThat(result).isTrue();
+        assertThat(connection.stringCommands().get(newKey).block()).isEqualTo(value);
+        if (hasTtl) {
+            assertThat(connection.keyCommands().ttl(newKey).block()).isGreaterThan(0);
+        } else {
+            assertThat(connection.keyCommands().ttl(newKey).block()).isEqualTo(-1);
+        }
 
-        connection.stringCommands().set(originalKey, ByteBuffer.wrap("value".getBytes())).block();
+        connection.stringCommands().set(originalKey, value).block();
 
         result = connection.keyCommands().renameNX(originalKey, newKey).block();
 
@@ -143,6 +177,10 @@ public class RedissonReactiveRedisClusterConnectionRenameTest {
 
     private Integer getTargetSlot(Integer originalSlot) {
         return sameSlot ? originalSlot : MAX_SLOT - originalSlot - 1;
+    }
+    
+    private Integer getSlotForKey(ByteBuffer key) {
+        return (Integer) connection.read(null, StringCodec.INSTANCE, RedisCommands.KEYSLOT, key.array()).block();
     }
 
 }

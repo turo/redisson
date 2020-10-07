@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.redisson.connection.MasterSlaveConnectionManager.MAX_SLOT;
 
 @RunWith(Parameterized.class)
-public class RedissonReactiveRedisClusterConnectionRenameTest {
+public class RedissonReactiveClusterKeyCommandsTest {
 
     @Parameterized.Parameters(name= "{index} - same slot = {0}; has ttl = {1}")
     public static Iterable<Object[]> data() {
