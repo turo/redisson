@@ -438,7 +438,7 @@ public class RedissonClusterConnection extends RedissonConnection implements Def
             throw new InvalidDataAccessResourceUsageException("Clustered rename is not supported in a pipeline");
         }
 
-        if (clusterGetSlotForKey(oldName).equals(clusterGetSlotForKey(newName))) {
+        if (redisson.getConnectionManager().calcSlot(oldName) == redisson.getConnectionManager().calcSlot(newName)) {
             super.rename(oldName, newName);
             return;
         }
