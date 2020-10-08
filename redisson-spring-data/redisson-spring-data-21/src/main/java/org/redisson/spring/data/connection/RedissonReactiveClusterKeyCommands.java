@@ -15,7 +15,11 @@
  */
 package org.redisson.spring.data.connection;
 
-import io.netty.util.CharsetUtil;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
 import org.reactivestreams.Publisher;
 import org.redisson.api.RFuture;
 import org.redisson.client.codec.ByteArrayCodec;
@@ -28,13 +32,11 @@ import org.springframework.data.redis.connection.ReactiveRedisConnection;
 import org.springframework.data.redis.connection.ReactiveRedisConnection.BooleanResponse;
 import org.springframework.data.redis.connection.RedisClusterNode;
 import org.springframework.util.Assert;
+
+import io.netty.util.CharsetUtil;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-
-import java.nio.ByteBuffer;
-import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
+import reactor.util.function.Tuple2;
 
 /**
  *
@@ -78,28 +80,57 @@ public class RedissonReactiveClusterKeyCommands extends RedissonReactiveKeyComma
                 return super.rename(commands);
             }
 
-            BooleanResponse<RenameCommand> result = new BooleanResponse<>(command, true);
-
             return read(keyBuf, ByteArrayCodec.INSTANCE, RedisCommands.DUMP, keyBuf)
                     .filter(Objects::nonNull)
                     .zipWith(
-                            pTtl(command.getKey())
+                            Mono.defer(() -> pTtl(command.getKey())
                                     .filter(Objects::nonNull)
                                     .map(ttl -> Math.max(0, ttl))
                                     .switchIfEmpty(Mono.just(0L))
+                            )
                     )
-                    .doOnSuccess((ignored) -> del(command.getKey()))
                     .flatMap(valueAndTtl -> {
                         return write(newKeyBuf, StringCodec.INSTANCE, RedisCommands.RESTORE, newKeyBuf, valueAndTtl.getT2(), valueAndTtl.getT1());
                     })
-                    .thenReturn(result)
-                    .switchIfEmpty(Mono.just(result));
+                    .thenReturn(new BooleanResponse<>(command, true))
+                    .doOnSuccess((ignored) -> del(command.getKey()));
         });
     }
 
     @Override
     public Flux<ReactiveRedisConnection.BooleanResponse<RenameCommand>> renameNX(Publisher<RenameCommand> commands) {
-        return super.renameNX(commands);
+        return execute(commands, command -> {
+            Assert.notNull(command.getKey(), "Key must not be null!");
+            Assert.notNull(command.getNewName(), "New name must not be null!");
+
+            byte[] keyBuf = toByteArray(command.getKey());
+            byte[] newKeyBuf = toByteArray(command.getNewName());
+
+            if (executorService.getConnectionManager().calcSlot(keyBuf) == executorService.getConnectionManager().calcSlot(newKeyBuf)) {
+                return super.renameNX(commands);
+            }
+
+            return exists(command.getNewName())
+                    .zipWith(read(keyBuf, ByteArrayCodec.INSTANCE, RedisCommands.DUMP, keyBuf))
+                    .filter(newKeyExistsAndDump -> !newKeyExistsAndDump.getT1() && Objects.nonNull(newKeyExistsAndDump.getT2()))
+                    .map(Tuple2::getT2)
+                    .zipWhen(value ->
+                            pTtl(command.getKey())
+                                    .filter(Objects::nonNull)
+                                    .map(ttl -> Math.max(0, ttl))
+                                    .switchIfEmpty(Mono.just(0L))
+
+                    )
+                    .flatMap(valueAndTtl -> write(newKeyBuf, StringCodec.INSTANCE, RedisCommands.RESTORE, newKeyBuf, valueAndTtl.getT2(), valueAndTtl.getT1())
+                            .then(Mono.just(true)))
+                    .switchIfEmpty(Mono.just(false))
+                    .doOnSuccess(didRename -> {
+                        if (didRename) {
+                            del(command.getKey());
+                        }
+                    })
+                    .map(didRename -> new BooleanResponse<>(command, didRename));
+        });
     }
 
 }
