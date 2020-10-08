@@ -44,6 +44,7 @@ public class RedissonClusterConnectionRenameTest {
 
     byte[] originalKey = "key".getBytes();
     byte[] newKey = "unset".getBytes();
+    byte[] value = "value".getBytes();
 
     @BeforeClass
     public static void before() throws FailedToStartRedisException, IOException, InterruptedException {
@@ -85,40 +86,40 @@ public class RedissonClusterConnectionRenameTest {
 
     @Test
     public void testRename() {
-        connection.set(originalKey, "value".getBytes());
+        connection.set(originalKey, value);
         connection.expire(originalKey, 1000);
 
         Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-        newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(originalKey, getTargetSlot(originalSlot));
 
         connection.rename(originalKey, newKey);
 
-        assertThat(connection.get(newKey)).isEqualTo("value".getBytes());
+        assertThat(connection.get(newKey)).isEqualTo(value);
         assertThat(connection.ttl(newKey)).isGreaterThan(0);
     }
 
     @Test
     public void testRename_pipeline() {
-        connection.set(originalKey, "value".getBytes());
+        connection.set(originalKey, value);
 
         Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-        newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(originalKey, getTargetSlot(originalSlot));
 
         connection.openPipeline();
         assertThatThrownBy(() -> connection.rename(originalKey, newKey)).isInstanceOf(InvalidDataAccessResourceUsageException.class);
         connection.closePipeline();
     }
 
-    protected byte[] getNewKeyForSlot(String originalKey, Integer targetSlot) {
+    protected byte[] getNewKeyForSlot(byte[] originalKey, Integer targetSlot) {
         int counter = 0;
 
-        byte[] newKey = (originalKey + counter).getBytes();
+        byte[] newKey = (new String(originalKey) + counter).getBytes();
 
         Integer newKeySlot = connection.clusterGetSlotForKey(newKey);
 
         while(!newKeySlot.equals(targetSlot)) {
             counter++;
-            newKey = (originalKey + counter).getBytes();
+            newKey = (new String(originalKey) + counter).getBytes();
             newKeySlot = connection.clusterGetSlotForKey(newKey);
         }
 
@@ -127,19 +128,19 @@ public class RedissonClusterConnectionRenameTest {
 
     @Test
     public void testRenameNX() {
-        connection.set(originalKey, "value".getBytes());
+        connection.set(originalKey, value);
         connection.expire(originalKey, 1000);
 
         Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-        byte[] newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(originalKey, getTargetSlot(originalSlot));
 
         Boolean result = connection.renameNX(originalKey, newKey);
 
-        assertThat(connection.get(newKey)).isEqualTo("value".getBytes());
+        assertThat(connection.get(newKey)).isEqualTo(value);
         assertThat(connection.ttl(newKey)).isGreaterThan(0);
         assertThat(result).isTrue();
 
-        connection.set(originalKey, "value".getBytes());
+        connection.set(originalKey, value);
 
         result = connection.renameNX(originalKey, newKey);
 
@@ -148,10 +149,10 @@ public class RedissonClusterConnectionRenameTest {
 
     @Test
     public void testRenameNX_pipeline() {
-        connection.set(originalKey, "value".getBytes());
+        connection.set(originalKey, value);
 
         Integer originalSlot = connection.clusterGetSlotForKey(originalKey);
-        byte[] newKey = getNewKeyForSlot("key", getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(originalKey, getTargetSlot(originalSlot));
 
         connection.openPipeline();
         assertThatThrownBy(() -> connection.renameNX(originalKey, newKey)).isInstanceOf(InvalidDataAccessResourceUsageException.class);
