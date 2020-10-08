@@ -19,7 +19,8 @@ import org.redisson.config.Config;
 import org.redisson.config.SubscriptionMode;
 import org.redisson.connection.balancer.RandomLoadBalancer;
 import org.redisson.reactive.CommandReactiveService;
-import reactor.core.publisher.Mono;
+import org.springframework.data.redis.RedisSystemException;
+
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -27,6 +28,7 @@ import java.time.Duration;
 import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.redisson.connection.MasterSlaveConnectionManager.MAX_SLOT;
 
 @RunWith(Parameterized.class)
@@ -124,12 +126,20 @@ public class RedissonReactiveClusterKeyCommandsTest {
         Integer originalSlot = getSlotForKey(originalKey);
         newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
 
-        Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
+        if (sameSlot) {
+            // This is a quirk of the implementation - since same-slot renames use the non-cluster version,
+            // the result is a Redis error. This behavior matches other spring-data-redis implementations
+            assertThatThrownBy(() -> connection.keyCommands().rename(originalKey, newKey).block())
+                    .isInstanceOf(RedisSystemException.class);
 
-        assertThat(response).isTrue();
+        } else {
+            Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
 
-        final ByteBuffer newKeyValue = connection.stringCommands().get(newKey).block();
-        assertThat(newKeyValue).isEqualTo(null);
+            assertThat(response).isTrue();
+
+            final ByteBuffer newKeyValue = connection.stringCommands().get(newKey).block();
+            assertThat(newKeyValue).isEqualTo(null);
+        }
     }
 
     protected ByteBuffer getNewKeyForSlot(String originalKey, Integer targetSlot) {
