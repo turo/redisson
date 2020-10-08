@@ -104,7 +104,7 @@ public class RedissonReactiveClusterKeyCommandsTest {
         }
 
         Integer originalSlot = getSlotForKey(originalKey);
-        ByteBuffer newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
 
         Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
 
@@ -122,7 +122,7 @@ public class RedissonReactiveClusterKeyCommandsTest {
     @Test
     public void testRename_keyNotExist() {
         Integer originalSlot = getSlotForKey(originalKey);
-        ByteBuffer newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
+        newKey = getNewKeyForSlot(new String(originalKey.array()), getTargetSlot(originalSlot));
 
         Boolean response = connection.keyCommands().rename(originalKey, newKey).block();
 
